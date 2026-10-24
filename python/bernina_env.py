@@ -3,12 +3,13 @@ import numpy as np
 from gym import spaces
 
 from carmaker_env import CarMakerEnv
+from parametrization_testrun import DEFAULT_TERMINATION_TIME
 from cmapi import DVADuration
 
 
 class BerninaEnv(CarMakerEnv):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, termination_time=DEFAULT_TERMINATION_TIME):
+        super().__init__(termination_time=termination_time)
         # The CarMaker driver handles steering.
         self.action_space = spaces.Box(
             low=0.02, high=1.0, shape=(1,), dtype=np.float32

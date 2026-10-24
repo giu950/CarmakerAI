@@ -25,6 +25,19 @@ class EnvironmentTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             CarMakerEnv()
 
+    def test_custom_termination_time(self):
+        env = BerninaEnv(termination_time=240)
+        env.dt = 180.0
+        self.assertFalse(env.is_done([100.0, 180.0, 12.0]))
+        env.dt = 240.0
+        self.assertTrue(env.is_done([100.0, 240.0, 12.0]))
+
+    def test_invalid_termination_times(self):
+        for value in (0, -1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    BerninaEnv(termination_time=value)
+
     def make_env(self, speed=12.0, simulation_time=0.0, overshoot=0.0):
         env = BerninaEnv()
 
@@ -155,10 +168,29 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_time_limit_ends_moving_car_episode(self):
         env = self.make_env()
-        env.dt = env.simulation_time = env.maxTime
+        env.dt = env.simulation_time = env.maxTime - env.time_step
         _, _, done, _ = env.step([0.5])
+        self.assertEqual(env.dt, env.maxTime)
         self.assertTrue(done)
         self.assertTrue(env.stopped)
+
+    def test_episode_limit_matches_bundled_testrun(self):
+        testrun = (pathlib.Path(__file__).resolve().parents[1]
+                   / "carmaker" / "Data" / "TestRun" / "berninaPass")
+        parameters = dict(
+            line.split(" = ", 1) for line in testrun.read_text().splitlines()
+            if " = " in line
+        )
+        self.assertEqual(BerninaEnv().maxTime,
+                         float(parameters["DrivMan.0.TimeLimit"]))
+
+    def test_final_step_does_not_wait_past_episode_limit(self):
+        env = self.make_env()
+        env.dt = env.simulation_time = env.maxTime - 0.005
+        env.step([0.5])
+        predicate, _ = env.simcontrol.create_quantity_condition.call_args[0]
+        self.assertFalse(predicate(env.maxTime - 0.001))
+        self.assertTrue(predicate(env.maxTime))
 
 
 if __name__ == "__main__":

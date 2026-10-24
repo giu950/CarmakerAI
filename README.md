@@ -202,7 +202,7 @@ python python/train.py --timesteps 2048 --model models/ppo_carmaker
 
 The script uses **Proximal Policy Optimization (PPO)** from Stable-Baselines3 to train an agent that controls the vehicle's throttle.
 
-The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It extends the reusable `CarMakerEnv` base class in `python/carmaker_env.py` and uses:
+The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It extends the reusable `CarMakerEnv` base class in `python/carmaker_env.py`. The RL episode time limit defaults to 180 seconds. The same duration is applied to `DrivMan.0.TimeLimit` in the runtime TestRun variation, leaving the saved TestRun file unchanged. The environment uses:
 
 | Component | Description |
 |---|---|
@@ -219,6 +219,14 @@ models/ppo_carmaker.zip
 
 The number of training timesteps can be modified using the `--timesteps` argument. PPO collects complete rollout batches, so the actual number of steps may exceed the requested minimum.
 
+Set the episode duration in simulation seconds with `--termination-time`, for example:
+
+```powershell
+python python/train.py --timesteps 2048 --termination-time 240 --model models/ppo_carmaker
+```
+
+This option defaults to `180` and accepts finite positive values. It sets both the RL and CarMaker maneuver time limits. In Python, use `BerninaEnv(termination_time=240)`. The shared default is `DEFAULT_TERMINATION_TIME` in `python/parametrization_testrun.py`.
+
 CarMaker stores simulation logs and results in the project's `SimOutput/` directory.
 
 ### 1.7 Evaluate the trained agent
@@ -228,6 +236,8 @@ Once training is complete, evaluate the policy using:
 ```powershell
 python python/evaluate.py --model models/ppo_carmaker
 ```
+
+Evaluation also accepts `--termination-time`, with the same default of 180 seconds. Pass the training duration explicitly when evaluating with a custom limit.
 
 The script loads the trained model and runs an episode on the Bernina Pass using the actions predicted by the agent.
 

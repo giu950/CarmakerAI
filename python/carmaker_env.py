@@ -2,27 +2,29 @@
 from abc import ABC, abstractmethod
 
 import gym
-from parametrization_testrun import cmapi, make_variations
+from parametrization_testrun import (
+    cmapi, make_variations, DEFAULT_TERMINATION_TIME, termination_time_seconds,
+)
 import asyncio
 import nest_asyncio  # Import nest_asyncio
 
 class CarMakerEnv(gym.Env, ABC):
-    def __init__(self):
+    def __init__(self, termination_time=DEFAULT_TERMINATION_TIME):
         super().__init__()
 
         # Apply nest_asyncio to allow nested event loops
         nest_asyncio.apply()
 
-        # Keep the original simulation timing and episode behavior.
+        # Use the same duration for the RL episode and TestRun variation.
         self.dt = 0.0
         self.time_step = 0.02
-        self.maxTime = 890
+        self.maxTime = termination_time_seconds(termination_time)
         self.sync_timeout = 30.0
         self.loop = asyncio.get_event_loop()  # Create an event loop
         print("Init success")
 
     async def start_simulation(self):
-        variations = await make_variations()
+        variations = await make_variations(termination_time=self.maxTime)
 
         cmapi.logger.info(f"Executing with self.simcontrol...")
         self.variation = variations[0]
@@ -66,7 +68,7 @@ class CarMakerEnv(gym.Env, ABC):
     async def advance_simulation(self):
         """Advance from the acknowledged simulator time, then pause again."""
         await self.read_simulation_time()
-        target_time = self.dt + self.time_step
+        target_time = min(self.dt + self.time_step, self.maxTime)
         condition = self.simcontrol.create_quantity_condition(
             lambda simulation_time: simulation_time >= target_time, "Time"
         )
@@ -94,7 +96,7 @@ class CarMakerEnv(gym.Env, ABC):
 
     def is_done(self, observation):
         """End at the time limit; subclasses may add scenario conditions."""
-        return self.dt > self.maxTime
+        return self.dt >= self.maxTime
 
     def reset(self):
         # Synchronously start a new simulation
