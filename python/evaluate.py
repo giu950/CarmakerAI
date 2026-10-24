@@ -1,7 +1,7 @@
 """Evaluate one episode using a trained PPO policy."""
 import argparse
 
-from carmaker_env import CarMakerEnv
+from bernina_env import BerninaEnv
 from parametrization_testrun import cmapi
 from stable_baselines3 import PPO
 
@@ -11,7 +11,7 @@ async def main():
     parser.add_argument("--model", default="models/ppo_carmaker")
     args = parser.parse_args()
     model = PPO.load(args.model)
-    env = CarMakerEnv()
+    env = BerninaEnv()
     observation = env.reset()
     for _ in range(int(env.maxTime / env.time_step) + 1):
         action, _ = model.predict(observation, deterministic=True)

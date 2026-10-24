@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 
-from carmaker_env import CarMakerEnv
+from bernina_env import BerninaEnv
 from parametrization_testrun import cmapi
 from stable_baselines3 import PPO
 
@@ -15,7 +15,7 @@ async def main():
     if args.timesteps <= 0:
         parser.error("--timesteps must be positive")
     Path(args.model).parent.mkdir(parents=True, exist_ok=True)
-    env = CarMakerEnv()
+    env = BerninaEnv()
     model = PPO("MlpPolicy", env, verbose=1)
     model.learn(total_timesteps=args.timesteps)
     model.save(args.model)

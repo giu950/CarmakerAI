@@ -16,7 +16,8 @@ The repository can be used in two steps:
 ```text
 CarmakerAI/
 ├── python/
-│   ├── carmaker_env.py           # Gym environment and reward
+│   ├── carmaker_env.py           # Reusable CarMaker Gym base class
+?   ??? bernina_env.py            # Bernina actions, observations, and reward
 │   ├── parametrization_testrun.py # CarMaker API and scenario configuration
 │   ├── test_connection.py        # Check the CarMaker Python API
 │   ├── train.py                  # Train and save a PPO policy
@@ -199,7 +200,7 @@ python python/train.py --timesteps 2048 --model models/ppo_carmaker
 
 The script uses **Proximal Policy Optimization (PPO)** from Stable-Baselines3 to train an agent that controls the vehicle's throttle.
 
-The example environment is defined in `python/carmaker_env.py` and uses:
+The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It extends the reusable `CarMakerEnv` base class in `python/carmaker_env.py` and uses:
 
 | Component | Description |
 |---|---|
@@ -242,6 +243,8 @@ Once this basic setup is working, it can be used as a starting point for impleme
 
 The next step is to extend the provided example to implement a custom autonomous driving environment.
 
-The main starting point is `python/carmaker_env.py`, where the action space, observation space, reward function, and interaction with CarMaker are defined.
+Create a subclass of `CarMakerEnv` from `python/carmaker_env.py`. The base class handles simulation startup and shutdown, Gym reset/step calls, and simulation timing. It is abstract and cannot be instantiated directly.
 
-Further instructions for creating a custom environment will be added in this section.
+Use `python/bernina_env.py` as an example: define `action_space` and `observation_space` in your subclass, implement the asynchronous `set_action` and `get_observation` methods, and implement the synchronous `compute_reward` method. `set_action` should apply the action and wait for the simulation step; the base class then advances `dt` by `time_step`.
+
+Override `is_done(observation)` to add scenario-specific termination conditions. The base implementation checks the time limit; `BerninaEnv` also ends the episode when the car stops after five seconds. Configure the scenario through `python/parametrization_testrun.py` or the `CARMAKER_PROJECT` and `CARMAKER_TESTRUN` environment variables.

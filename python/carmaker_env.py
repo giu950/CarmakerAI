@@ -1,23 +1,17 @@
+"""Reusable Gym lifecycle for CarMaker environments."""
+from abc import ABC, abstractmethod
+
 import gym
-from gym import spaces
-import numpy as np
 from parametrization_testrun import cmapi, make_variations
-from cmapi import DVADuration
 import asyncio
 import nest_asyncio  # Import nest_asyncio
 
-class CarMakerEnv(gym.Env):
+class CarMakerEnv(gym.Env, ABC):
     def __init__(self):
-        super(CarMakerEnv, self).__init__()
+        super().__init__()
 
         # Apply nest_asyncio to allow nested event loops
         nest_asyncio.apply()
-
-        # Control throttle only; the CarMaker driver handles steering.
-        self.action_space = spaces.Box(low=0.02, high=1.0, shape=(1,), dtype=np.float32)
-
-        # Define observation space: for example, distance, time, velocity
-        self.observation_space = spaces.Box(low=np.array([0, 0, 0]), high=np.array([np.inf, np.inf, np.inf]), dtype=np.float32)
 
         # Keep the original simulation timing and episode behavior.
         self.dt = 0.0
@@ -50,25 +44,24 @@ class CarMakerEnv(gym.Env):
         await self.simcontrol.stop_and_disconnect()
         print("Simulation stopped")
 
+    @abstractmethod
     async def set_action(self, action):
-        self.simcontrol.simio.dva_write_absolute_value("DM.Gas", float(np.asarray(action).reshape(-1)[0]), DVADuration.permanent)
-        condition = self.simcontrol.create_quantity_condition(lambda fTime: fTime > self.dt, "Time")
-        await condition.wait()
-        
-        self.dt = self.dt + self.time_step
+        """Apply an action and wait for the simulation step to complete."""
+        raise NotImplementedError
 
+    @abstractmethod
     async def get_observation(self):
-        distance, = await self.simcontrol.simio.dva_read_async("Car.Road.sRoad")
-        time, = await self.simcontrol.simio.dva_read_async("Time")
-        velocity, = await self.simcontrol.simio.dva_read_async("Car.v")
-        sGas, = await self.simcontrol.simio.dva_read_async("DM.Gas")
-        self.simcontrol.simio.dva_release("DM.Gas")
-        return np.array([distance, time, velocity], dtype=np.float32)
+        """Return an observation matching the subclass observation space."""
+        raise NotImplementedError
 
+    @abstractmethod
     def compute_reward(self, observation):
-        distance, time, velocity = observation
-        reward = distance + velocity - 0.1 * time  # Example: reward for maintaining a target distance
-        return reward
+        """Return the reward for the current observation."""
+        raise NotImplementedError
+
+    def is_done(self, observation):
+        """End at the time limit; subclasses may add scenario conditions."""
+        return self.dt > self.maxTime
 
     def reset(self):
         # Synchronously start a new simulation
@@ -84,6 +77,7 @@ class CarMakerEnv(gym.Env):
     def step(self, action):
         # Apply action to CarMaker and get new observation synchronously
         self.loop.run_until_complete(self.set_action(action))  # Run the async function
+        self.dt += self.time_step
         observation = self.loop.run_until_complete(self.get_observation())  # Run the async function
         if self.dt % 20 == 0:
             print("Observation: ", observation)
@@ -91,12 +85,7 @@ class CarMakerEnv(gym.Env):
         # Compute reward
         reward = self.compute_reward(observation)
 
-        # Determine if the simulation is done (e.g., time limit reached)
-        done = False
-        if self.dt > self.maxTime or (round(observation[2], 1) == 0.0 and self.dt > 5.0):
-            print("Forcing stop")
-            print("Distance: ", round(observation[2], 1))
-            done = True
+        done = self.is_done(observation)
 
         # Additional info (optional)
         info = {}
