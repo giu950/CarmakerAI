@@ -24,17 +24,11 @@ class BerninaEnv(CarMakerEnv):
             "DM.Gas", float(np.asarray(action).reshape(-1)[0]),
             DVADuration.permanent,
         )
-        condition = self.simcontrol.create_quantity_condition(
-            lambda fTime: fTime > self.dt, "Time"
-        )
-        await condition.wait()
 
     async def get_observation(self):
-        distance, = await self.simcontrol.simio.dva_read_async("Car.Road.sRoad")
-        time, = await self.simcontrol.simio.dva_read_async("Time")
-        velocity, = await self.simcontrol.simio.dva_read_async("Car.v")
-        await self.simcontrol.simio.dva_read_async("DM.Gas")
-        self.simcontrol.simio.dva_release("DM.Gas")
+        distance, time, velocity = await self.simcontrol.simio.dva_read_async(
+            "Car.Road.sRoad", "Time", "Car.v"
+        )
         return np.array([distance, time, velocity], dtype=np.float32)
 
     def compute_reward(self, observation):

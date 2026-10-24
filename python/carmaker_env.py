@@ -17,6 +17,7 @@ class CarMakerEnv(gym.Env, ABC):
         self.dt = 0.0
         self.time_step = 0.02
         self.maxTime = 890
+        self.sync_timeout = 30.0
         self.loop = asyncio.get_event_loop()  # Create an event loop
         print("Init success")
 
@@ -36,17 +37,49 @@ class CarMakerEnv(gym.Env, ABC):
         await self.simcontrol.start_and_connect()
         print("OK start_and_connect")
         await self.simcontrol.start_sim()
+        await self.pause_simulation()
         print("OK start_sim")
 
     async def stop_simulation(self):
         print("Stopping simulation")
+        await self.simcontrol.stop_sim()
         await self.simcontrol.create_simstate_condition(cmapi.ConditionSimState.finished).wait()
         await self.simcontrol.stop_and_disconnect()
         print("Simulation stopped")
 
+    async def pause_simulation(self):
+        """Pause and confirm acknowledgement before reading or applying actions."""
+        self.simcontrol.pause_sim()
+
+        async def wait_for_pause():
+            while True:
+                acceleration, = await self.simcontrol.simio.dva_read_async("SC.TAccel")
+                if acceleration == 0.0:
+                    return
+                await asyncio.sleep(0.001)
+
+        await asyncio.wait_for(wait_for_pause(), timeout=self.sync_timeout)
+
+    async def read_simulation_time(self):
+        self.dt, = await self.simcontrol.simio.dva_read_async("Time")
+
+    async def advance_simulation(self):
+        """Advance from the acknowledged simulator time, then pause again."""
+        await self.read_simulation_time()
+        target_time = self.dt + self.time_step
+        condition = self.simcontrol.create_quantity_condition(
+            lambda simulation_time: simulation_time >= target_time, "Time"
+        )
+        self.simcontrol.resume_sim()
+        try:
+            await asyncio.wait_for(condition.wait(), timeout=self.sync_timeout)
+        finally:
+            await self.pause_simulation()
+        await self.read_simulation_time()
+
     @abstractmethod
     async def set_action(self, action):
-        """Apply an action and wait for the simulation step to complete."""
+        """Apply an action while paused; the base class advances simulation."""
         raise NotImplementedError
 
     @abstractmethod
@@ -67,6 +100,7 @@ class CarMakerEnv(gym.Env, ABC):
         # Synchronously start a new simulation
         self.dt = 0.0
         self.loop.run_until_complete(self.start_simulation())  # Run the async function
+        self.loop.run_until_complete(self.read_simulation_time())
         print("Simulation started")
 
         # Get the initial observation
@@ -77,7 +111,8 @@ class CarMakerEnv(gym.Env, ABC):
     def step(self, action):
         # Apply action to CarMaker and get new observation synchronously
         self.loop.run_until_complete(self.set_action(action))  # Run the async function
-        self.dt += self.time_step
+        previous_time = self.dt
+        self.loop.run_until_complete(self.advance_simulation())
         observation = self.loop.run_until_complete(self.get_observation())  # Run the async function
         if self.dt % 20 == 0:
             print("Observation: ", observation)
@@ -88,7 +123,7 @@ class CarMakerEnv(gym.Env, ABC):
         done = self.is_done(observation)
 
         # Additional info (optional)
-        info = {}
+        info = {"simulation_time": self.dt, "simulation_dt": self.dt - previous_time}
 
         # Automatically stop the simulation if done
         if done:
