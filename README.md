@@ -19,9 +19,11 @@ CarmakerAI/
 │   ├── carmaker_env.py           # Reusable CarMaker Gym base class
 ?   ??? bernina_env.py            # Bernina actions, observations, and reward
 │   ├── parametrization_testrun.py # CarMaker API and scenario configuration
-│   ├── test_connection.py        # Check the CarMaker Python API
 │   ├── train.py                  # Train and save a PPO policy
 │   └── evaluate.py               # Evaluate the trained policy
+├── tests/
+│   ├── test_connection.py        # Check the CarMaker Python API
+│   └── test_environments.py      # Environment regression tests
 ├── carmaker/
 │   └── Data/
 │       ├── Config/               # CarMaker project configuration
@@ -124,7 +126,7 @@ Before running the reinforcement learning example, check that Python can success
 From the repository root, execute:
 
 ```powershell
-python python/test_connection.py
+python tests/test_connection.py
 ```
 
 If the API is correctly configured, the script prints:
