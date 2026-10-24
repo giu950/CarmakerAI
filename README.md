@@ -1,82 +1,247 @@
-# CarmakerAI
+# Reinforcement Learning for Autonomous Driving with CarMaker
 
-A minimal PPO reinforcement learning experiment for IPG CarMaker's Bernina Pass scenario. The agent controls **throttle only**; CarMaker's driver handles steering. This is an experimental baseline, not a complete autonomous driving system.
+This repository provides a **minimal working setup for developing autonomous driving agents using Reinforcement Learning (RL) and IPG CarMaker**.
 
-## Contents
+The goal is to offer a starting point for building, training, and evaluating custom RL agents in a CarMaker simulation environment.
+
+To demonstrate the framework and verify the installation, the repository includes a simple example based on the **Bernina Pass scenario**, where a PPO agent controls **only the vehicle's throttle**, while CarMaker's built-in driver handles steering.
+
+The repository can be used in two steps:
+
+1. **Set up and test the framework:** Configure Python and CarMaker, verify the connection, and run the provided throttle-control example.
+2. **Develop a custom environment:** Extend the example by defining custom actions, observations, rewards, and simulation scenarios to develop more advanced autonomous driving agents.
+
+## Repository structure
 
 ```text
-python/
-  carmakerv1_env.py          Gym environment and reward
-  parametrization_testrun.py CarMaker API and scenario configuration
-  test_connection.py        Check the local CarMaker API import
-  train.py                  Train and save a PPO policy
-  evaluate.py               Evaluate one episode
-carmaker/Data/
-  Config/                   Minimal project configuration
-  TestRun/berninaPass_v1     Bernina scenario
-requirements.txt
+CarmakerAI/
+├── python/
+│   ├── carmakerv1_env.py          # Gym environment and reward
+│   ├── parametrization_testrun.py # CarMaker API and scenario configuration
+│   ├── test_connection.py        # Check the CarMaker Python API
+│   ├── train.py                  # Train and save a PPO policy
+│   └── evaluate.py               # Evaluate the trained policy
+├── carmaker/
+│   └── Data/
+│       ├── Config/               # CarMaker project configuration
+│       └── TestRun/
+│           └── berninaPass_v1    # Bernina Pass scenario
+├── requirements.txt
+└── README.md
 ```
 
-The course project, duplicate scenarios, archives, trained models, simulation outputs, caches, and compiled binaries are omitted.
+The repository contains the minimal files needed for the example. Trained models, simulation outputs, and other generated files are excluded.
 
-## Setup
+# Step 1 — Set up and test the environment
 
-The original project targets **Windows, CarMaker 11.0, and Python 3.6**. A licensed CarMaker installation and its Python API are required. The test run references the installation's `Examples/Demo_Audi_R8` vehicle and `Examples/Measured/Scenario/CHE_BerninaPass.bin` road; these assets are not bundled here.
+This section explains how to configure the Python environment, connect it to CarMaker, and run the provided Bernina Pass example.
 
-Install Conda (Miniconda or Anaconda) and open a Conda-enabled PowerShell terminal. Run the following from the `CarmakerAI` repository root (the directory containing this README and `requirements.txt`). Create the legacy environment, then install dependencies:
+### 1.1 Requirements
+
+The project targets the following configuration:
+
+- Windows
+- **IPG CarMaker 11.0** with a valid license
+- **Python 3.6**
+- Conda (Miniconda or Anaconda)
+- Gym and Stable-Baselines3
+
+A working CarMaker installation and its Python API are required. The CarMaker API is provided with CarMaker and is not installed through `requirements.txt`.
+
+### 1.2 Set up the Python environment
+
+We recommend creating a dedicated Conda environment to avoid dependency conflicts.
+
+Clone the repository and navigate to its root directory:
 
 ```powershell
-conda create -n carmaker-ai python=3.6 pip=21.3.1 -y
-conda activate carmaker-ai
+git clone https://github.com/giu950/CarmakerAI.git
+cd CarmakerAI
+```
+
+Create and activate the Conda environment:
+
+```powershell
+conda create -n CMai python=3.6 pip=21.3.1 -y
+conda activate CMai
+```
+
+Install the required dependencies:
+
+```powershell
 python -m pip install setuptools==59.6.0 wheel==0.37.1
 python -m pip install -r requirements.txt
 ```
 
-The default API directory is `C:/IPG/carmaker/win64-11.0/Python/python3.6`. Override it if needed:
+Verify that the correct Python version is installed:
+
+```powershell
+python -V
+```
+
+The output should indicate Python 3.6.x, for example:
+
+```text
+Python 3.6.13 :: Anaconda, Inc.
+```
+
+### 1.3 Configure the CarMaker Python API
+
+Once the Python environment is ready, the CarMaker Python API must be added to the Python search path.
+
+For CarMaker 11.0 on Windows, the default installation path is:
+
+```text
+C:/IPG/carmaker/win64-11.0/Python/python3.6
+```
+
+The path can be added directly to a Python script before importing the API:
+
+```python
+import sys
+sys.path.append("C:/IPG/carmaker/win64-11.0/Python/python3.6")
+
+import cmapi
+```
+
+In this repository, the API path is handled by `python/parametrization_testrun.py`.
+
+If CarMaker is installed in a different directory, configure the `CARMAKER_PYTHON_PATH` environment variable in PowerShell:
 
 ```powershell
 $env:CARMAKER_PYTHON_PATH = "C:/IPG/carmaker/win64-11.0/Python/python3.6"
 ```
 
-`cmapi` comes from the licensed CarMaker installation; it is not installed by `requirements.txt`. The environment variable above applies to the current PowerShell session. Activate `carmaker-ai` and set any custom paths again in each new terminal.
+Replace the path with the location of your CarMaker installation.
 
-Verify that the environment can load the API before training:
+**Note:** This environment variable applies to the current PowerShell session. If you open a new terminal, activate the Conda environment again and reconfigure any custom paths.
+
+### 1.4 Verify the CarMaker Python API installation
+
+Before running the reinforcement learning example, check that Python can successfully import the CarMaker API.
+
+From the repository root, execute:
 
 ```powershell
 python python/test_connection.py
 ```
 
-The script prints the Python interpreter and API location, then `Hello, CarMaker! API import succeeded.` It exits with code 1 and setup guidance if the API cannot be imported. This is an API import smoke test: it does not connect to a running simulator, check the license, or start a test run. If it fails, check that `python --version` reports Python 3.6 and that `CARMAKER_PYTHON_PATH` points to the directory containing your installed `cmapi` package.
+If the API is correctly configured, the script prints:
 
-Open `carmaker/` as a project in CarMaker 11.0 and check that `berninaPass_v1` runs with your installation. If the minimal project needs local initialization, use CarMaker's project setup/update workflow. Alternatively, set `CARMAKER_PROJECT` to an existing initialized BerninaAI project containing this test run. Set `CARMAKER_TESTRUN` to select another test run.
+```text
+Hello, CarMaker! API import succeeded.
+```
 
-For example, to use a different initialized project in the current terminal:
+If the test fails, verify that:
+
+- Python 3.6 is active.
+- `CARMAKER_PYTHON_PATH` points to the correct CarMaker Python API directory.
+- CarMaker 11.0 is properly installed.
+
+**Important:** This script checks that the API can be imported. It does not start a CarMaker simulation or verify the license.
+
+For a more complete connection test, CarMaker also provides example scripts in:
+
+```text
+<path-to-CarMaker>/Python/Examples/
+```
+
+Configure `runtime_minimal_example.py` to point to an existing CarMaker project and run it:
 
 ```powershell
-$env:CARMAKER_PROJECT = "C:/path/to/BerninaAI"
+python runtime_minimal_example.py
+```
+
+For further information, refer to Chapter 24 of the *CarMaker 11.0 Programmer's Guide*.
+
+### 1.5 Configure the Bernina Pass scenario
+
+The repository includes a CarMaker TestRun for the Bernina Pass:
+
+```text
+carmaker/Data/TestRun/berninaPass_v1
+```
+
+The simulation uses the following assets from the CarMaker installation:
+
+- Vehicle: `Examples/Demo_Audi_R8`
+- Road: `Examples/Measured/Scenario/CHE_BerninaPass.bin`
+
+These assets are not included in the repository and must be available locally.
+
+To verify the simulation:
+
+1. Open CarMaker 11.0.
+2. Open the `carmaker/` directory as a CarMaker project.
+3. Load the `berninaPass_v1` TestRun.
+4. Start the simulation and verify that the scenario runs correctly.
+
+If the project requires additional initialization, use CarMaker's project creation/update functionality.
+
+By default, the Python scripts use the project in the `carmaker/` folder and the `berninaPass_v1` TestRun.
+
+To use another initialized CarMaker project, set:
+
+```powershell
+$env:CARMAKER_PROJECT = "C:/path/to/your/project"
 $env:CARMAKER_TESTRUN = "berninaPass_v1"
 ```
 
-## Train and evaluate
+### 1.6 Train the example agent
 
-Run from the repository root:
+Once the environment is correctly configured and the Bernina Pass scenario runs in CarMaker, the reinforcement learning experiment can be started.
+
+From the repository root, execute:
 
 ```powershell
 python python/train.py --timesteps 2048 --model models/ppo_carmaker
+```
+
+The script uses **Proximal Policy Optimization (PPO)** from Stable-Baselines3 to train an agent that controls the vehicle's throttle.
+
+The example environment is defined in `python/carmakerv1_env.py` and uses:
+
+| Component | Description |
+|---|---|
+| Action | Throttle control between 0.02 and 1.0 |
+| Observations | Road distance, simulation time, and vehicle speed |
+| Reward | `distance + speed - 0.1 * time` |
+| Steering | Controlled by CarMaker's built-in driver |
+
+The trained policy is saved as:
+
+```text
+models/ppo_carmaker.zip
+```
+
+The number of training timesteps can be modified using the `--timesteps` argument. PPO collects complete rollout batches, so the actual number of steps may exceed the requested minimum.
+
+CarMaker stores simulation logs and results in the project's `SimOutput/` directory.
+
+### 1.7 Evaluate the trained agent
+
+Once training is complete, evaluate the policy using:
+
+```powershell
 python python/evaluate.py --model models/ppo_carmaker
 ```
 
-Models and simulation results are ignored by Git. PPO collects full rollout batches, so the actual number of training steps can exceed the requested minimum.
+The script loads the trained model and runs an episode on the Bernina Pass using the actions predicted by the agent.
 
-## Environment
+CarMaker's visualization tools can be used to observe the vehicle during the simulation.
 
-- Action: one throttle value between 0.02 and 1.0.
-- Observation: road distance, simulation time, and vehicle speed.
-- Reward: `distance + speed - 0.1 * time`.
-- Episode ends at the environment's time limit or when the vehicle stops after five seconds. CarMaker's test run also has its own time limit (180 seconds).
+### 1.8 Expected outcome
 
-The legacy Gym API is retained to match Stable-Baselines3 1.3.0. The environment uses nested asynchronous simulation calls. Its shutdown waits for CarMaker to report a finished simulation; early closure may therefore wait until the test run finishes. Simulation timing, episode handling, and reward quality need validation in CarMaker before serious training.
+After completing this setup, you should have a working framework in which a Python reinforcement learning agent can interact with CarMaker, receive vehicle observations, apply throttle actions, and train and evaluate a simple policy.
 
-## Validation
+**The purpose of this example is to validate the CarMaker–RL integration, rather than to train a complete autonomous driving system.**
 
-Python source syntax was checked with Python 3.6 grammar. End-to-end simulation and training have not been validated for this cleaned version; they require the licensed CarMaker installation and the legacy dependency environment. Modern Python versions are not the target for this dependency stack.
+Once this basic setup is working, it can be used as a starting point for implementing a custom reinforcement learning environment with additional controls, observations, and reward functions.
+
+# Step 2 — Develop your own environment
+
+The next step is to extend the provided example to implement a custom autonomous driving environment.
+
+The main starting point is `python/carmakerv1_env.py`, where the action space, observation space, reward function, and interaction with CarMaker are defined.
+
+Further instructions for creating a custom environment will be added in this section.
