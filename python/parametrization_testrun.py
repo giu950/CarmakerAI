@@ -19,7 +19,7 @@ except ImportError as exc:
 PROJECT_PATH = pathlib.Path(os.environ.get(
     "CARMAKER_PROJECT", str(pathlib.Path(__file__).resolve().parents[1] / "carmaker")
 ))
-TESTRUN = os.environ.get("CARMAKER_TESTRUN", "berninaPass_v1")
+TESTRUN = os.environ.get("CARMAKER_TESTRUN", "berninaPass")
 
 
 async def make_variations():

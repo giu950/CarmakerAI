@@ -6,9 +6,9 @@ from cmapi import DVADuration
 import asyncio
 import nest_asyncio  # Import nest_asyncio
 
-class CarMakerEnvV1(gym.Env):
+class CarMakerEnv(gym.Env):
     def __init__(self):
-        super(CarMakerEnvV1, self).__init__()
+        super(CarMakerEnv, self).__init__()
 
         # Apply nest_asyncio to allow nested event loops
         nest_asyncio.apply()

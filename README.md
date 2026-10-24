@@ -16,7 +16,7 @@ The repository can be used in two steps:
 ```text
 CarmakerAI/
 ├── python/
-│   ├── carmakerv1_env.py          # Gym environment and reward
+│   ├── carmaker_env.py           # Gym environment and reward
 │   ├── parametrization_testrun.py # CarMaker API and scenario configuration
 │   ├── test_connection.py        # Check the CarMaker Python API
 │   ├── train.py                  # Train and save a PPO policy
@@ -25,7 +25,7 @@ CarmakerAI/
 │   └── Data/
 │       ├── Config/               # CarMaker project configuration
 │       └── TestRun/
-│           └── berninaPass_v1    # Bernina Pass scenario
+│           └── berninaPass        # Bernina Pass scenario
 ├── requirements.txt
 └── README.md
 ```
@@ -159,7 +159,7 @@ For further information, refer to Chapter 24 of the *CarMaker 11.0 Programmer's 
 The repository includes a CarMaker TestRun for the Bernina Pass:
 
 ```text
-carmaker/Data/TestRun/berninaPass_v1
+carmaker/Data/TestRun/berninaPass
 ```
 
 The simulation uses the following assets from the CarMaker installation:
@@ -173,18 +173,18 @@ To verify the simulation:
 
 1. Open CarMaker 11.0.
 2. Open the `carmaker/` directory as a CarMaker project.
-3. Load the `berninaPass_v1` TestRun.
+3. Load the `berninaPass` TestRun.
 4. Start the simulation and verify that the scenario runs correctly.
 
 If the project requires additional initialization, use CarMaker's project creation/update functionality.
 
-By default, the Python scripts use the project in the `carmaker/` folder and the `berninaPass_v1` TestRun.
+By default, the Python scripts use the project in the `carmaker/` folder and the `berninaPass` TestRun.
 
 To use another initialized CarMaker project, set:
 
 ```powershell
 $env:CARMAKER_PROJECT = "C:/path/to/your/project"
-$env:CARMAKER_TESTRUN = "berninaPass_v1"
+$env:CARMAKER_TESTRUN = "berninaPass"
 ```
 
 ### 1.6 Train the example agent
@@ -199,7 +199,7 @@ python python/train.py --timesteps 2048 --model models/ppo_carmaker
 
 The script uses **Proximal Policy Optimization (PPO)** from Stable-Baselines3 to train an agent that controls the vehicle's throttle.
 
-The example environment is defined in `python/carmakerv1_env.py` and uses:
+The example environment is defined in `python/carmaker_env.py` and uses:
 
 | Component | Description |
 |---|---|
@@ -242,6 +242,6 @@ Once this basic setup is working, it can be used as a starting point for impleme
 
 The next step is to extend the provided example to implement a custom autonomous driving environment.
 
-The main starting point is `python/carmakerv1_env.py`, where the action space, observation space, reward function, and interaction with CarMaker are defined.
+The main starting point is `python/carmaker_env.py`, where the action space, observation space, reward function, and interaction with CarMaker are defined.
 
 Further instructions for creating a custom environment will be added in this section.
