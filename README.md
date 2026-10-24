@@ -8,6 +8,7 @@ A minimal PPO reinforcement learning experiment for IPG CarMaker's Bernina Pass 
 python/
   carmakerv1_env.py          Gym environment and reward
   parametrization_testrun.py CarMaker API and scenario configuration
+  test_connection.py        Check the local CarMaker API import
   train.py                  Train and save a PPO policy
   evaluate.py               Evaluate one episode
 carmaker/Data/
@@ -22,7 +23,7 @@ The course project, duplicate scenarios, archives, trained models, simulation ou
 
 The original project targets **Windows, CarMaker 11.0, and Python 3.6**. A licensed CarMaker installation and its Python API are required. The test run references the installation's `Examples/Demo_Audi_R8` vehicle and `Examples/Measured/Scenario/CHE_BerninaPass.bin` road; these assets are not bundled here.
 
-Create the legacy environment with Conda, then install dependencies:
+Install Conda (Miniconda or Anaconda) and open a Conda-enabled PowerShell terminal. Run the following from the `CarmakerAI` repository root (the directory containing this README and `requirements.txt`). Create the legacy environment, then install dependencies:
 
 ```powershell
 conda create -n carmaker-ai python=3.6 pip=21.3.1 -y
@@ -37,7 +38,24 @@ The default API directory is `C:/IPG/carmaker/win64-11.0/Python/python3.6`. Over
 $env:CARMAKER_PYTHON_PATH = "C:/IPG/carmaker/win64-11.0/Python/python3.6"
 ```
 
+`cmapi` comes from the licensed CarMaker installation; it is not installed by `requirements.txt`. The environment variable above applies to the current PowerShell session. Activate `carmaker-ai` and set any custom paths again in each new terminal.
+
+Verify that the environment can load the API before training:
+
+```powershell
+python python/test_connection.py
+```
+
+The script prints the Python interpreter and API location, then `Hello, CarMaker! API import succeeded.` It exits with code 1 and setup guidance if the API cannot be imported. This is an API import smoke test: it does not connect to a running simulator, check the license, or start a test run. If it fails, check that `python --version` reports Python 3.6 and that `CARMAKER_PYTHON_PATH` points to the directory containing your installed `cmapi` package.
+
 Open `carmaker/` as a project in CarMaker 11.0 and check that `berninaPass_v1` runs with your installation. If the minimal project needs local initialization, use CarMaker's project setup/update workflow. Alternatively, set `CARMAKER_PROJECT` to an existing initialized BerninaAI project containing this test run. Set `CARMAKER_TESTRUN` to select another test run.
+
+For example, to use a different initialized project in the current terminal:
+
+```powershell
+$env:CARMAKER_PROJECT = "C:/path/to/BerninaAI"
+$env:CARMAKER_TESTRUN = "berninaPass_v1"
+```
 
 ## Train and evaluate
 
