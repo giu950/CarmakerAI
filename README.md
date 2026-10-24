@@ -208,8 +208,10 @@ The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It
 |---|---|
 | Action | Throttle control between 0.02 and 1.0 |
 | Observations | Road distance, simulation time, and vehicle speed |
-| Reward | `distance + speed - 0.1 * time` |
+| Reward | Incremental road progress minus `0.1 * elapsed_seconds`, with an additional stopping penalty |
 | Steering | Controlled by CarMaker's built-in driver |
+
+The reward uses `distance_now - distance_previous`, with the baseline initialized from each episode's reset observation. It applies a time penalty of 0.1 reward units per simulation second and an additional 1.0 per second when speed rounds to zero after the five-second startup grace period. Both penalties use the actual elapsed simulation time. These rates are set by `time_penalty_rate` and `stopped_penalty_rate` in `BerninaEnv`. Collision and road-departure penalties require additional observations and are not included in this example.
 
 The trained policy is saved as:
 

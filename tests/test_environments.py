@@ -39,6 +39,39 @@ class EnvironmentTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     BerninaEnv(termination_time=value)
 
+    def test_reward_counts_only_new_progress(self):
+        env = BerninaEnv()
+        self.assertEqual(env.compute_reward([1000.0, 10.0, 12.0]), 0.0)
+        self.assertAlmostEqual(env.compute_reward([1002.0, 10.02, 12.0]), 1.998)
+        self.assertAlmostEqual(env.compute_reward([1002.0, 10.04, 12.0]), -0.002)
+
+    def test_reward_penalizes_reverse_progress(self):
+        env = BerninaEnv()
+        env.compute_reward([1000.0, 10.0, 12.0])
+        self.assertAlmostEqual(env.compute_reward([999.0, 10.02, 12.0]), -1.002)
+
+    def test_stopping_adds_penalty_after_startup_grace(self):
+        env = BerninaEnv()
+        env.compute_reward([1000.0, 5.0, 0.0])
+        self.assertAlmostEqual(env.compute_reward([1000.0, 5.02, 0.0]), -0.022)
+        env.compute_reward([1000.0, 0.0, 0.0])
+        self.assertAlmostEqual(env.compute_reward([1000.0, 0.02, 0.0]), -0.002)
+
+    def test_reward_time_penalties_use_actual_elapsed_time(self):
+        env = BerninaEnv()
+        env.compute_reward([1000.0, 10.0, 12.0])
+        reward = env.compute_reward([1001.0, 10.03, 12.0])
+        reward += env.compute_reward([1002.0, 10.10, 12.0])
+        self.assertAlmostEqual(reward, 2.0 - 0.1 * 0.1)
+
+    def test_reset_reinitializes_reward_baseline(self):
+        env = self.make_env()
+        env.reset()
+        env.compute_reward([1000.0, 10.0, 12.0])
+        observation = env.reset()
+        self.assertEqual(observation[0], 100.0)
+        self.assertAlmostEqual(env.compute_reward([101.0, 0.02, 12.0]), 0.998)
+
     def make_env(self, speed=12.0, simulation_time=0.0, overshoot=0.0):
         env = BerninaEnv()
 
@@ -211,7 +244,7 @@ class EnvironmentTests(unittest.TestCase):
         observation, reward, done, info = env.step(np.array([0.5]))
         self.assertAlmostEqual(env.dt, 0.02)
         np.testing.assert_allclose(observation, [100.0, 0.02, 12.0])
-        self.assertAlmostEqual(reward, 111.998, places=5)
+        self.assertAlmostEqual(reward, -0.002, places=5)
         self.assertFalse(done)
         self.assertEqual(info, {"simulation_time": 0.02, "simulation_dt": 0.02})
         self.assertEqual(env.events, ["action", "resume", "advance", "pause"])
