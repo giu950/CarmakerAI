@@ -15,14 +15,15 @@ async def main():
     args = parser.parse_args()
     model = PPO.load(args.model)
     env = BerninaEnv(termination_time=args.termination_time)
-    observation = env.reset()
-    for _ in range(int(env.maxTime / env.time_step) + 1):
-        action, _ = model.predict(observation, deterministic=True)
-        observation, reward, done, _ = env.step(action)
-        if done:
-            print("Episode finished. Final reward:", reward)
-            break
-    else:
+    try:
+        observation = env.reset()
+        for _ in range(int(env.maxTime / env.time_step) + 1):
+            action, _ = model.predict(observation, deterministic=True)
+            observation, reward, done, _ = env.step(action)
+            if done:
+                print("Episode finished. Final reward:", reward)
+                break
+    finally:
         env.close()
 
 

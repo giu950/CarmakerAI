@@ -20,6 +20,9 @@ class CarMakerEnv(gym.Env, ABC):
         self.time_step = 0.02
         self.maxTime = termination_time_seconds(termination_time)
         self.sync_timeout = 30.0
+        self.simcontrol = None
+        self._simulator_active = False
+        self._simulation_started = False
         self.loop = asyncio.get_event_loop()  # Create an event loop
         print("Init success")
 
@@ -36,18 +39,38 @@ class CarMakerEnv(gym.Env, ABC):
         master = cmapi.CarMaker()
         await self.simcontrol.set_master(master)
         print("OK set_master")
+        # Claim cleanup ownership before connection, including partial failures.
+        self._simulator_active = True
         await self.simcontrol.start_and_connect()
         print("OK start_and_connect")
+        self._simulation_started = True
         await self.simcontrol.start_sim()
         await self.pause_simulation()
         print("OK start_sim")
 
     async def stop_simulation(self):
-        print("Stopping simulation")
-        await self.simcontrol.stop_sim()
-        await self.simcontrol.create_simstate_condition(cmapi.ConditionSimState.finished).wait()
-        await self.simcontrol.stop_and_disconnect()
-        print("Simulation stopped")
+        """Release simulator resources once, even if stopping fails."""
+        if not self._simulator_active:
+            return
+        simcontrol = self.simcontrol
+        self._simulator_active = False
+        simulation_started = self._simulation_started
+        self._simulation_started = False
+        try:
+            if simulation_started:
+                await asyncio.wait_for(simcontrol.stop_sim(), self.sync_timeout)
+                await asyncio.wait_for(
+                    simcontrol.create_simstate_condition(
+                        cmapi.ConditionSimState.finished
+                    ).wait(), self.sync_timeout,
+                )
+        finally:
+            try:
+                await asyncio.wait_for(
+                    simcontrol.stop_and_disconnect(), self.sync_timeout
+                )
+            finally:
+                self.simcontrol = None
 
     async def pause_simulation(self):
         """Pause and confirm acknowledgement before reading or applying actions."""
@@ -99,6 +122,14 @@ class CarMakerEnv(gym.Env, ABC):
         return self.dt >= self.maxTime
 
     def reset(self):
+        self.close()
+        try:
+            return self._reset_episode()
+        except BaseException:
+            self.close()
+            raise
+
+    def _reset_episode(self):
         # Synchronously start a new simulation
         self.dt = 0.0
         self.loop.run_until_complete(self.start_simulation())  # Run the async function
@@ -139,6 +170,7 @@ class CarMakerEnv(gym.Env, ABC):
         pass
 
     def close(self):
-        # Synchronously stop the simulation
-        self.loop.run_until_complete(self.stop_simulation())  # Run the async function
+        """Close the current simulator session; repeated calls are harmless."""
+        if self._simulator_active:
+            self.loop.run_until_complete(self.stop_simulation())
 

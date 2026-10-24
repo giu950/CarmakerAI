@@ -19,10 +19,12 @@ async def main():
         parser.error("--timesteps must be positive")
     Path(args.model).parent.mkdir(parents=True, exist_ok=True)
     env = BerninaEnv(termination_time=args.termination_time)
-    model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=args.timesteps)
-    model.save(args.model)
-    env.close()
+    try:
+        model = PPO("MlpPolicy", env, verbose=1)
+        model.learn(total_timesteps=args.timesteps)
+        model.save(args.model)
+    finally:
+        env.close()
 
 
 if __name__ == "__main__":

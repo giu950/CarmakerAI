@@ -4,7 +4,7 @@ import pathlib
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -12,6 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "python"))
 from carmaker_env import CarMakerEnv
 from bernina_env import BerninaEnv
 from cmapi import DVADuration
+import train
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -73,11 +74,15 @@ class EnvironmentTests(unittest.TestCase):
         async def start():
             env.simulation_time = simulation_time
             env.paused = True
+            env._simulator_active = True
+            env.stopped = False
 
         async def stop():
             env.stopped = True
+            env._simulator_active = False
 
         env.stopped = False
+        env._simulator_active = True
         env.start_simulation = start
         env.stop_simulation = stop
         env.simcontrol = SimpleNamespace(
@@ -92,6 +97,110 @@ class EnvironmentTests(unittest.TestCase):
             ),
         )
         return env
+
+    def make_cleanup_env(self, stop_error=None):
+        env = BerninaEnv()
+        calls = []
+
+        async def stop():
+            calls.append("stop")
+            if stop_error:
+                raise stop_error
+
+        async def wait():
+            calls.append("finished")
+
+        async def disconnect():
+            calls.append("disconnect")
+
+        env.simcontrol = SimpleNamespace(
+            stop_sim=stop, stop_and_disconnect=disconnect,
+            create_simstate_condition=Mock(return_value=SimpleNamespace(wait=wait)),
+        )
+        env._simulator_active = True
+        env._simulation_started = True
+        return env, calls
+
+    def test_close_is_idempotent(self):
+        env, calls = self.make_cleanup_env()
+        env.close()
+        env.close()
+        self.assertEqual(calls, ["stop", "finished", "disconnect"])
+        self.assertIsNone(env.simcontrol)
+
+    def test_disconnect_runs_even_when_stop_fails(self):
+        env, calls = self.make_cleanup_env(RuntimeError("stop failed"))
+        with self.assertRaisesRegex(RuntimeError, "stop failed"):
+            env.close()
+        env.close()
+        self.assertEqual(calls, ["stop", "disconnect"])
+
+    def test_close_before_start_is_harmless(self):
+        env = BerninaEnv()
+        env.close()
+        self.assertFalse(env._simulator_active)
+
+    def test_episode_end_followed_by_close_stops_only_once(self):
+        env, calls = self.make_cleanup_env()
+
+        async def action(value):
+            pass
+
+        async def advance():
+            env.dt = env.maxTime
+
+        async def observation():
+            return np.array([100.0, env.dt, 12.0], dtype=np.float32)
+
+        env.set_action = action
+        env.advance_simulation = advance
+        env.get_observation = observation
+        _, _, done, _ = env.step([0.5])
+        self.assertTrue(done)
+        env.close()
+        self.assertEqual(calls, ["stop", "finished", "disconnect"])
+
+    def test_training_errors_always_close_environment(self):
+        for stage in ("construct", "learn", "save"):
+            with self.subTest(stage=stage):
+                env = Mock()
+                model = Mock()
+                failure = RuntimeError("training failed")
+                if stage != "construct":
+                    getattr(model, stage).side_effect = failure
+                with patch.object(sys, "argv", ["train.py"]), \
+                        patch.object(train, "BerninaEnv", return_value=env), \
+                        patch.object(train, "Path"), \
+                        patch.object(train, "PPO", return_value=model) as ppo:
+                    if stage == "construct":
+                        ppo.side_effect = failure
+                    with self.assertRaisesRegex(RuntimeError, "training failed"):
+                        self.loop.run_until_complete(train.main())
+                env.close.assert_called_once_with()
+
+    def test_partial_startup_disconnects_without_stopping_simulation(self):
+        env, calls = self.make_cleanup_env()
+        env._simulation_started = False
+        env.close()
+        self.assertEqual(calls, ["disconnect"])
+
+    def test_reset_failure_cleans_up_connection(self):
+        env, calls = self.make_cleanup_env()
+        env.close()
+        calls.clear()
+
+        async def start():
+            replacement, _ = self.make_cleanup_env()
+            env.simcontrol = replacement.simcontrol
+            env._simulator_active = True
+            env._simulation_started = True
+            raise RuntimeError("startup failed")
+
+        env.start_simulation = start
+        with self.assertRaisesRegex(RuntimeError, "startup failed"):
+            env.reset()
+        self.assertFalse(env._simulator_active)
+        self.assertIsNone(env.simcontrol)
 
     def test_reset_and_step_preserve_bernina_behavior(self):
         env = self.make_env()
