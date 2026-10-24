@@ -1,5 +1,7 @@
 """Reusable Gym lifecycle for CarMaker environments."""
 from abc import ABC, abstractmethod
+from enum import Enum
+import logging
 
 import gym
 from parametrization_testrun import (
@@ -7,6 +9,18 @@ from parametrization_testrun import (
 )
 import asyncio
 import nest_asyncio  # Import nest_asyncio
+
+logger = logging.getLogger(__name__)
+
+
+class SimulatorState(Enum):
+    CLOSED = "closed"
+    STARTING = "starting"
+    PAUSED = "paused"
+    RUNNING = "running"
+    STOPPING = "stopping"
+    FAILED = "failed"
+
 
 class CarMakerEnv(gym.Env, ABC):
     def __init__(self, termination_time=DEFAULT_TERMINATION_TIME):
@@ -21,56 +35,85 @@ class CarMakerEnv(gym.Env, ABC):
         self.maxTime = termination_time_seconds(termination_time)
         self.sync_timeout = 30.0
         self.simcontrol = None
+        self.state = SimulatorState.CLOSED
         self._simulator_active = False
         self._simulation_started = False
         self.loop = asyncio.get_event_loop()  # Create an event loop
         print("Init success")
 
+    async def _bounded(self, operation):
+        return await asyncio.wait_for(operation, timeout=self.sync_timeout)
+
+    async def _recover_failure(self):
+        """Discard failed sessions without replacing the triggering exception."""
+        try:
+            await self.stop_simulation()
+        except BaseException:
+            logger.warning("Simulator cleanup failed during recovery", exc_info=True)
+        finally:
+            self.simcontrol = None
+            self._simulator_active = False
+            self._simulation_started = False
+            self.state = SimulatorState.FAILED
+
     async def start_simulation(self):
-        variations = await make_variations(termination_time=self.maxTime)
-
-        cmapi.logger.info(f"Executing with self.simcontrol...")
-        self.variation = variations[0]
-
-        self.simcontrol = cmapi.SimControlInteractive()
-        print("OK self.simcontrolInteractive")
-        self.simcontrol.set_variation(self.variation)
-        print("OK set_variation")
-        master = cmapi.CarMaker()
-        await self.simcontrol.set_master(master)
-        print("OK set_master")
-        # Claim cleanup ownership before connection, including partial failures.
-        self._simulator_active = True
-        await self.simcontrol.start_and_connect()
-        print("OK start_and_connect")
-        self._simulation_started = True
-        await self.simcontrol.start_sim()
-        await self.pause_simulation()
-        print("OK start_sim")
+        # A new session always owns a fresh controller.
+        await self.stop_simulation()
+        self.state = SimulatorState.STARTING
+        try:
+            variations = await self._bounded(make_variations(termination_time=self.maxTime))
+            self.variation = variations[0]
+            self.simcontrol = cmapi.SimControlInteractive()
+            # Own cleanup before any controller configuration can fail.
+            self._simulator_active = True
+            self.simcontrol.set_variation(self.variation)
+            master = cmapi.CarMaker()
+            await self._bounded(self.simcontrol.set_master(master))
+            await self._bounded(self.simcontrol.start_and_connect())
+            self._simulation_started = True
+            await self._bounded(self.simcontrol.start_sim())
+            await self.pause_simulation()
+        except BaseException:
+            await self._recover_failure()
+            raise
 
     async def stop_simulation(self):
-        """Release simulator resources once, even if stopping fails."""
-        if not self._simulator_active:
-            return
+        """Bound each shutdown stage and discard the controller exactly once."""
         simcontrol = self.simcontrol
+        if simcontrol is None or not self._simulator_active:
+            self.simcontrol = None
+            return
+        self.state = SimulatorState.STOPPING
+        self.simcontrol = None
         self._simulator_active = False
         simulation_started = self._simulation_started
         self._simulation_started = False
+        first_error = None
         try:
             if simulation_started:
-                await asyncio.wait_for(simcontrol.stop_sim(), self.sync_timeout)
-                await asyncio.wait_for(
-                    simcontrol.create_simstate_condition(
+                try:
+                    await self._bounded(simcontrol.stop_sim())
+                    await self._bounded(simcontrol.create_simstate_condition(
                         cmapi.ConditionSimState.finished
-                    ).wait(), self.sync_timeout,
-                )
-        finally:
+                    ).wait())
+                except BaseException as exc:
+                    first_error = exc
             try:
-                await asyncio.wait_for(
-                    simcontrol.stop_and_disconnect(), self.sync_timeout
-                )
-            finally:
-                self.simcontrol = None
+                await self._bounded(simcontrol.stop_and_disconnect())
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                else:
+                    logger.warning("Simulator shutdown also failed", exc_info=True)
+                # stop_and_disconnect may fail before its disconnect stage.
+                try:
+                    await self._bounded(simcontrol.disconnect())
+                except BaseException:
+                    logger.warning("Fallback simulator disconnect failed", exc_info=True)
+        finally:
+            self.state = SimulatorState.FAILED if first_error else SimulatorState.CLOSED
+        if first_error is not None:
+            raise first_error
 
     async def pause_simulation(self):
         """Pause and confirm acknowledgement before reading or applying actions."""
@@ -83,10 +126,11 @@ class CarMakerEnv(gym.Env, ABC):
                     return
                 await asyncio.sleep(0.001)
 
-        await asyncio.wait_for(wait_for_pause(), timeout=self.sync_timeout)
+        await self._bounded(wait_for_pause())
+        self.state = SimulatorState.PAUSED
 
     async def read_simulation_time(self):
-        self.dt, = await self.simcontrol.simio.dva_read_async("Time")
+        self.dt, = await self._bounded(self.simcontrol.simio.dva_read_async("Time"))
 
     async def advance_simulation(self):
         """Advance from the acknowledged simulator time, then pause again."""
@@ -95,11 +139,18 @@ class CarMakerEnv(gym.Env, ABC):
         condition = self.simcontrol.create_quantity_condition(
             lambda simulation_time: simulation_time >= target_time, "Time"
         )
-        self.simcontrol.resume_sim()
         try:
-            await asyncio.wait_for(condition.wait(), timeout=self.sync_timeout)
-        finally:
-            await self.pause_simulation()
+            self.simcontrol.resume_sim()
+            self.state = SimulatorState.RUNNING
+            await self._bounded(condition.wait())
+        except BaseException:
+            # Pausing is best effort; its failure must not hide the wait error.
+            try:
+                await self.pause_simulation()
+            except BaseException:
+                logger.warning("Simulator pause failed during recovery", exc_info=True)
+            raise
+        await self.pause_simulation()
         await self.read_simulation_time()
 
     @abstractmethod
@@ -126,7 +177,7 @@ class CarMakerEnv(gym.Env, ABC):
         try:
             return self._reset_episode()
         except BaseException:
-            self.close()
+            self.loop.run_until_complete(self._recover_failure())
             raise
 
     def _reset_episode(self):
@@ -137,16 +188,25 @@ class CarMakerEnv(gym.Env, ABC):
         print("Simulation started")
 
         # Get the initial observation
-        observation = self.loop.run_until_complete(self.get_observation())  # Run the async function
+        observation = self.loop.run_until_complete(self._bounded(self.get_observation()))  # Run the async function
         print("Observation: ", observation)
         return observation
 
     def step(self, action):
+        if self.state != SimulatorState.PAUSED:
+            raise RuntimeError("Simulator is not ready; call reset() before step()")
+        try:
+            return self._step_episode(action)
+        except BaseException:
+            self.loop.run_until_complete(self._recover_failure())
+            raise
+
+    def _step_episode(self, action):
         # Apply action to CarMaker and get new observation synchronously
-        self.loop.run_until_complete(self.set_action(action))  # Run the async function
+        self.loop.run_until_complete(self._bounded(self.set_action(action)))  # Run the async function
         previous_time = self.dt
         self.loop.run_until_complete(self.advance_simulation())
-        observation = self.loop.run_until_complete(self.get_observation())  # Run the async function
+        observation = self.loop.run_until_complete(self._bounded(self.get_observation()))  # Run the async function
         if self.dt % 20 == 0:
             print("Observation: ", observation)
 

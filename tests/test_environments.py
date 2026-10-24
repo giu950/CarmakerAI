@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "python"))
-from carmaker_env import CarMakerEnv
+from carmaker_env import CarMakerEnv, SimulatorState
 from bernina_env import BerninaEnv
 from cmapi import DVADuration
 import train
@@ -108,14 +108,18 @@ class EnvironmentTests(unittest.TestCase):
             env.simulation_time = simulation_time
             env.paused = True
             env._simulator_active = True
+            env.state = SimulatorState.PAUSED
             env.stopped = False
+            env.state = SimulatorState.PAUSED
 
         async def stop():
             env.stopped = True
+            env.state = SimulatorState.CLOSED
             env._simulator_active = False
 
         env.stopped = False
         env._simulator_active = True
+        env.state = SimulatorState.PAUSED
         env.start_simulation = start
         env.stop_simulation = stop
         env.simcontrol = SimpleNamespace(
@@ -151,6 +155,7 @@ class EnvironmentTests(unittest.TestCase):
             create_simstate_condition=Mock(return_value=SimpleNamespace(wait=wait)),
         )
         env._simulator_active = True
+        env.state = SimulatorState.PAUSED
         env._simulation_started = True
         return env, calls
 
@@ -172,6 +177,150 @@ class EnvironmentTests(unittest.TestCase):
         env = BerninaEnv()
         env.close()
         self.assertFalse(env._simulator_active)
+
+    def test_step_requires_reset_after_failure_or_close(self):
+        env = BerninaEnv()
+        for state in (SimulatorState.CLOSED, SimulatorState.FAILED):
+            env.state = state
+            with self.assertRaisesRegex(RuntimeError, "reset"):
+                env.step([0.5])
+
+    def test_shutdown_finished_wait_has_timeout(self):
+        env, calls = self.make_cleanup_env()
+        env.sync_timeout = 0.01
+
+        async def hang():
+            await asyncio.Future()
+
+        env.simcontrol.create_simstate_condition.return_value.wait = hang
+        with self.assertRaises(asyncio.TimeoutError):
+            env.close()
+        self.assertEqual(calls, ["stop", "disconnect"])
+        self.assertEqual(env.state, SimulatorState.FAILED)
+        self.assertIsNone(env.simcontrol)
+
+    def test_disconnect_timeout_uses_fallback_and_discards_controller(self):
+        env, calls = self.make_cleanup_env()
+        env.sync_timeout = 0.01
+
+        async def hang():
+            await asyncio.Future()
+
+        async def fallback():
+            calls.append("fallback")
+
+        env.simcontrol.stop_and_disconnect = hang
+        env.simcontrol.disconnect = fallback
+        with self.assertRaises(asyncio.TimeoutError):
+            env.close()
+        self.assertEqual(calls, ["stop", "finished", "fallback"])
+        self.assertEqual(env.state, SimulatorState.FAILED)
+        self.assertIsNone(env.simcontrol)
+        env.close()
+
+    def test_step_error_survives_pause_and_shutdown_errors(self):
+        env = self.make_env()
+
+        async def fail_wait():
+            raise RuntimeError("original step error")
+
+        async def fail_cleanup():
+            raise ValueError("cleanup error")
+
+        env.simcontrol.create_quantity_condition.return_value.wait = fail_wait
+        env.simcontrol.pause_sim.side_effect = ValueError("pause error")
+        env.stop_simulation = fail_cleanup
+        with self.assertLogs("carmaker_env", level="WARNING"):
+            with self.assertRaisesRegex(RuntimeError, "original step error"):
+                env.step([0.5])
+        self.assertEqual(env.state, SimulatorState.FAILED)
+        self.assertIsNone(env.simcontrol)
+        self.assertFalse(env._simulator_active)
+
+    def test_missing_observation_disconnects_and_marks_failed(self):
+        env, calls = self.make_cleanup_env()
+
+        async def no_op(*args):
+            pass
+
+        async def missing():
+            raise KeyError("quantity unavailable")
+
+        env.set_action = no_op
+        env.advance_simulation = no_op
+        env.get_observation = missing
+        with self.assertRaisesRegex(KeyError, "quantity unavailable"):
+            env.step([0.5])
+        self.assertEqual(calls, ["stop", "finished", "disconnect"])
+        self.assertEqual(env.state, SimulatorState.FAILED)
+
+    def test_action_timeout_disconnects_and_marks_failed(self):
+        env, calls = self.make_cleanup_env()
+        env.sync_timeout = 0.01
+
+        async def hang(action):
+            await asyncio.Future()
+
+        env.set_action = hang
+        with self.assertRaises(asyncio.TimeoutError):
+            env.step([0.5])
+        self.assertEqual(calls, ["stop", "finished", "disconnect"])
+        self.assertEqual(env.state, SimulatorState.FAILED)
+        self.assertIsNone(env.simcontrol)
+
+    def test_partial_startup_timeout_then_reset_uses_new_controller(self):
+        env = BerninaEnv()
+        env.sync_timeout = 0.01
+        controllers = []
+        disconnected = []
+
+        def factory():
+            index = len(controllers)
+
+            async def no_op(*args):
+                pass
+
+            async def connect():
+                if index == 0:
+                    await asyncio.Future()
+
+            async def disconnect():
+                disconnected.append(index)
+
+            async def read(*quantities):
+                values = {"Time": 0.0, "SC.TAccel": 0.0,
+                          "Car.Road.sRoad": 100.0, "Car.v": 12.0}
+                return [values[name] for name in quantities]
+
+            controller = SimpleNamespace(
+                set_variation=Mock(), set_master=no_op,
+                start_and_connect=connect, start_sim=no_op,
+                pause_sim=Mock(), stop_sim=no_op, stop_and_disconnect=disconnect,
+                create_simstate_condition=Mock(
+                    return_value=SimpleNamespace(wait=no_op)),
+                simio=SimpleNamespace(dva_read_async=read),
+            )
+            controllers.append(controller)
+            return controller
+
+        async def variations(**kwargs):
+            return [Mock()]
+
+        with patch("carmaker_env.make_variations", variations), \
+                patch("carmaker_env.cmapi.SimControlInteractive", side_effect=factory), \
+                patch("carmaker_env.cmapi.CarMaker"):
+            with self.assertRaises(asyncio.TimeoutError):
+                env.reset()
+            self.assertEqual(env.state, SimulatorState.FAILED)
+            self.assertIsNone(env.simcontrol)
+            self.assertEqual(disconnected, [0])
+            env.reset()
+            self.assertEqual(env.state, SimulatorState.PAUSED)
+            self.assertIs(env.simcontrol, controllers[1])
+            self.assertIsNot(controllers[0], controllers[1])
+            env.close()
+        self.assertEqual(disconnected, [0, 1])
+        self.assertEqual(env.state, SimulatorState.CLOSED)
 
     def test_episode_end_followed_by_close_stops_only_once(self):
         env, calls = self.make_cleanup_env()
@@ -226,6 +375,7 @@ class EnvironmentTests(unittest.TestCase):
             replacement, _ = self.make_cleanup_env()
             env.simcontrol = replacement.simcontrol
             env._simulator_active = True
+            env.state = SimulatorState.PAUSED
             env._simulation_started = True
             raise RuntimeError("startup failed")
 
