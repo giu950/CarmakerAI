@@ -12,7 +12,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "python"))
 from carmaker_env import CarMakerEnv, SimulatorState
 from bernina_env import BerninaEnv
 from cmapi import DVADuration
+import cmapi
 import train
+
+
+async def no_simulation_errors():
+    pass
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -123,6 +128,9 @@ class EnvironmentTests(unittest.TestCase):
         env.start_simulation = start
         env.stop_simulation = stop
         env.simcontrol = SimpleNamespace(
+            raise_sim_errors=no_simulation_errors,
+            get_simstate=Mock(return_value=SimpleNamespace(
+                get_condition_simstate=Mock(return_value=cmapi.ConditionSimState.running))),
             simio=SimpleNamespace(
                 dva_read_async=read, dva_write_absolute_value=Mock(side_effect=write),
                 dva_release=Mock(),
@@ -151,6 +159,9 @@ class EnvironmentTests(unittest.TestCase):
             calls.append("disconnect")
 
         env.simcontrol = SimpleNamespace(
+            raise_sim_errors=no_simulation_errors,
+            get_simstate=Mock(return_value=SimpleNamespace(
+                get_condition_simstate=Mock(return_value=cmapi.ConditionSimState.running))),
             stop_sim=stop, stop_and_disconnect=disconnect,
             create_simstate_condition=Mock(return_value=SimpleNamespace(wait=wait)),
         )
@@ -293,6 +304,9 @@ class EnvironmentTests(unittest.TestCase):
                 return [values[name] for name in quantities]
 
             controller = SimpleNamespace(
+                raise_sim_errors=no_simulation_errors,
+                get_simstate=Mock(return_value=SimpleNamespace(
+                    get_condition_simstate=Mock(return_value=cmapi.ConditionSimState.running))),
                 set_variation=Mock(), set_master=no_op,
                 start_and_connect=connect, start_sim=no_op,
                 pause_sim=Mock(), stop_sim=no_op, stop_and_disconnect=disconnect,
@@ -483,6 +497,108 @@ class EnvironmentTests(unittest.TestCase):
         predicate, _ = env.simcontrol.create_quantity_condition.call_args[0]
         self.assertFalse(predicate(env.maxTime - 0.001))
         self.assertTrue(predicate(env.maxTime))
+
+    def end_during_step(self, failed=False, at_limit=False):
+        env = self.make_env()
+        env.sync_timeout = 0.1
+        cancelled = []
+
+        async def finish_without_time_progress():
+            env.simcontrol.get_simstate().get_condition_simstate.return_value = (
+                cmapi.ConditionSimState.finished)
+            if at_limit:
+                env.simulation_time = env.maxTime
+            if failed:
+                async def report_error():
+                    raise cmapi.SimulationError("TestRun aborted")
+                env.simcontrol.raise_sim_errors = report_error
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.append(True)
+
+        env.simcontrol.create_quantity_condition.return_value.wait = finish_without_time_progress
+        result = env.step([0.5])
+        self.assertTrue(cancelled)
+        self.assertTrue(env.stopped)
+        env.simcontrol.pause_sim.assert_not_called()
+        return result
+
+    def test_finished_testrun_ends_without_clock_progress(self):
+        _, _, done, info = self.end_during_step()
+        self.assertTrue(done)
+        self.assertEqual(info["termination_reason"], "simulation_finished")
+        self.assertFalse(info["TimeLimit.truncated"])
+
+    def test_simulation_error_is_failure_without_clock_progress(self):
+        _, _, done, info = self.end_during_step(failed=True)
+        self.assertTrue(done)
+        self.assertEqual(info["termination_reason"], "simulation_failure")
+        self.assertIn("TestRun aborted", info["simulation_error"])
+        self.assertFalse(info["TimeLimit.truncated"])
+
+    def test_failure_at_time_limit_is_not_truncation(self):
+        _, _, _, info = self.end_during_step(failed=True, at_limit=True)
+        self.assertEqual(info["termination_reason"], "simulation_failure")
+        self.assertFalse(info["TimeLimit.truncated"])
+
+    def test_finished_at_time_limit_is_truncation(self):
+        _, _, _, info = self.end_during_step(at_limit=True)
+        self.assertEqual(info["termination_reason"], "time_limit")
+        self.assertTrue(info["TimeLimit.truncated"])
+
+    def test_stopped_vehicle_is_scenario_failure(self):
+        env = self.make_env(speed=0.0, simulation_time=6.0)
+        _, _, done, info = env.step([0.5])
+        self.assertTrue(done)
+        self.assertEqual(info["termination_reason"], "vehicle_stopped")
+        self.assertFalse(info["TimeLimit.truncated"])
+
+    def test_end_between_steps_does_not_apply_action(self):
+        env = self.make_env()
+        env.reset()
+        env.simcontrol.get_simstate().get_condition_simstate.return_value = (
+            cmapi.ConditionSimState.finished)
+        _, _, done, info = env.step([0.5])
+        self.assertTrue(done)
+        self.assertEqual(info["termination_reason"], "simulation_finished")
+        env.simcontrol.simio.dva_write_absolute_value.assert_not_called()
+        env.simcontrol.resume_sim.assert_not_called()
+
+    def test_finished_session_with_unavailable_observation_uses_last_observation(self):
+        env = self.make_env()
+        initial = env.reset()
+        env.simcontrol.get_simstate().get_condition_simstate.return_value = (
+            cmapi.ConditionSimState.finished)
+
+        async def unavailable():
+            raise KeyError("quantities unavailable after finish")
+
+        env.get_observation = unavailable
+        observation, _, done, info = env.step([0.5])
+        np.testing.assert_array_equal(observation, initial)
+        self.assertTrue(done)
+        self.assertFalse(info["terminal_observation_valid"])
+
+    def test_finished_session_disconnects_without_stop_or_finished_wait(self):
+        env, calls = self.make_cleanup_env()
+        env.simcontrol.get_simstate().get_condition_simstate.return_value = (
+            cmapi.ConditionSimState.finished)
+        self.assertTrue(self.loop.run_until_complete(env._check_simulation_end()))
+        env.close()
+        self.assertEqual(calls, ["disconnect"])
+
+    def test_finish_while_waiting_for_pause_acknowledgement(self):
+        env = self.make_env()
+        env.simcontrol.get_simstate().get_condition_simstate.return_value = (
+            cmapi.ConditionSimState.finished)
+
+        async def unavailable(*quantities):
+            self.fail("Finished TestRun must not wait for pause acknowledgement")
+
+        env.simcontrol.simio.dva_read_async = unavailable
+        self.loop.run_until_complete(env.pause_simulation())
+        self.assertEqual(env._episode_end, "simulation_finished")
 
 
 if __name__ == "__main__":

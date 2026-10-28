@@ -63,6 +63,9 @@ class BerninaEnv(CarMakerEnv):
         return reward
 
     def is_done(self, observation):
-        return super().is_done(observation) or (
-            round(observation[2], 1) == 0.0 and self.dt > 5.0
-        )
+        return super().is_done(observation) or bool(self.scenario_failure(observation))
+
+    def scenario_failure(self, observation):
+        if round(observation[2], 1) == 0.0 and self.dt > 5.0:
+            return "vehicle_stopped"
+        return None
