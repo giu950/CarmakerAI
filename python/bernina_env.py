@@ -1,4 +1,5 @@
 """Throttle-control environment for the Bernina Pass example."""
+import math
 import numpy as np
 from gym import spaces
 
@@ -8,7 +9,20 @@ from cmapi import DVADuration
 
 
 class BerninaEnv(CarMakerEnv):
-    def __init__(self, termination_time=DEFAULT_TERMINATION_TIME):
+    def __init__(self, termination_time=DEFAULT_TERMINATION_TIME,
+                 terminal_failure_penalties=None):
+        if terminal_failure_penalties is None:
+            terminal_failure_penalties = {
+                "collision": 100.0, "road_departure": 100.0,
+                "vehicle_stopped": 100.0,
+            }
+        self.terminal_failure_penalties = {
+            reason: float(penalty)
+            for reason, penalty in terminal_failure_penalties.items()
+        }
+        if any(not math.isfinite(penalty) or penalty < 0.0
+               for penalty in self.terminal_failure_penalties.values()):
+            raise ValueError("terminal failure penalties must be finite and nonnegative")
         super().__init__(termination_time=termination_time)
         self.time_penalty_rate = 0.1
         self.stopped_penalty_rate = 1.0
@@ -67,6 +81,12 @@ class BerninaEnv(CarMakerEnv):
 
     def is_done(self, observation):
         return super().is_done(observation) or bool(self.scenario_failure(observation))
+
+    def terminal_reward(self, observation, reason):
+        # Require an identified driving failure, including when CarMaker also
+        # reports a generic simulation error. Never infer one from error text.
+        failure = self.scenario_failure(observation)
+        return -self.terminal_failure_penalties.get(failure, 0.0)
 
     def scenario_failure(self, observation):
         if round(observation[2], 1) == 0.0 and self.dt > 5.0:

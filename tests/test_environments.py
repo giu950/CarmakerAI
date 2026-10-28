@@ -92,6 +92,56 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(observation[0], 100.0)
         self.assertAlmostEqual(env.compute_reward([101.0, 0.02, 12.0]), 0.998)
 
+    def test_terminal_penalties_apply_to_identified_driving_failures_once(self):
+        for failure in ("collision", "road_departure", "vehicle_stopped"):
+            with self.subTest(failure=failure):
+                env = self.make_env()
+                env.reset()
+                env.scenario_failure = Mock(return_value=failure)
+                _, reward, done, info = env.step([0.5])
+                self.assertTrue(done)
+                self.assertAlmostEqual(reward, -100.002, places=5)
+                self.assertEqual(info["terminal_reward"], -100.0)
+                with self.assertRaises(RuntimeError):
+                    env.step([0.5])
+
+    def test_terminal_penalties_can_be_customized_or_disabled(self):
+        for penalties, expected in (({"collision": 25.0}, -25.002), ({}, -0.002)):
+            env = self.make_env()
+            env.reset()
+            env.terminal_failure_penalties = penalties
+            env.scenario_failure = Mock(return_value="collision")
+            _, reward, _, _ = env.step([0.5])
+            self.assertAlmostEqual(reward, expected, places=5)
+        configured = BerninaEnv(terminal_failure_penalties={"collision": 25})
+        self.assertEqual(configured.terminal_failure_penalties, {"collision": 25.0})
+
+    def test_terminal_penalty_configuration_rejects_invalid_values(self):
+        for penalty in (-1, float("nan"), float("inf")):
+            with self.subTest(penalty=penalty):
+                with self.assertRaises(ValueError):
+                    BerninaEnv(terminal_failure_penalties={"collision": penalty})
+
+    def test_generic_simulation_failure_has_no_driving_penalty(self):
+        _, reward, _, info = self.end_during_step(failed=True)
+        self.assertEqual(reward, 0.0)
+        self.assertEqual(info["terminal_reward"], 0.0)
+
+    def test_driving_failure_is_penalized_even_with_generic_simulation_error(self):
+        env = self.make_env()
+        env.reset()
+        env.scenario_failure = Mock(return_value="collision")
+        env._episode_end = "simulation_failure"
+        _, reward, _, info = env.step([0.5])
+        self.assertEqual(info["termination_reason"], "simulation_failure")
+        self.assertEqual(reward, -100.0)
+        self.assertEqual(info["terminal_reward"], -100.0)
+
+    def test_normal_completion_and_time_limit_have_no_terminal_penalty(self):
+        for at_limit in (False, True):
+            _, _, _, info = self.end_during_step(at_limit=at_limit)
+            self.assertEqual(info["terminal_reward"], 0.0)
+
     def make_env(self, speed=12.0, simulation_time=0.0, overshoot=0.0):
         env = BerninaEnv()
 
@@ -594,6 +644,7 @@ class EnvironmentTests(unittest.TestCase):
         np.testing.assert_array_equal(observation, initial)
         self.assertTrue(done)
         self.assertFalse(info["terminal_observation_valid"])
+        self.assertEqual(info["terminal_reward"], 0.0)
 
     def test_finished_session_disconnects_without_stop_or_finished_wait(self):
         env, calls = self.make_cleanup_env()

@@ -224,6 +224,10 @@ class CarMakerEnv(gym.Env, ABC):
         """Override to identify failures reported by scenario observations."""
         return None
 
+    def terminal_reward(self, observation, reason):
+        """Optional reward adjustment for a terminal transition."""
+        return 0.0
+
     def termination_reason(self, observation):
         failure = self.scenario_failure(observation)
         if self._episode_end == "simulation_failure":
@@ -296,6 +300,10 @@ class CarMakerEnv(gym.Env, ABC):
 
         reason = self.termination_reason(observation)
         done = reason is not None
+        terminal_reward = 0.0
+        if done and observation_valid:
+            terminal_reward = self.terminal_reward(observation, reason)
+            reward += terminal_reward
 
         # Additional info (optional)
         info = {"simulation_time": self.dt, "simulation_dt": self.dt - previous_time}
@@ -305,6 +313,7 @@ class CarMakerEnv(gym.Env, ABC):
             if self._simulation_error is not None:
                 info["simulation_error"] = self._simulation_error
             info["terminal_observation_valid"] = observation_valid
+            info["terminal_reward"] = terminal_reward
 
         # Automatically stop the simulation if done
         if done:

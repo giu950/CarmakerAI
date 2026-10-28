@@ -211,7 +211,11 @@ The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It
 | Reward | Incremental road progress minus `0.1 * elapsed_seconds`, with an additional stopping penalty |
 | Steering | Controlled by CarMaker's built-in driver |
 
-The reward uses `distance_now - distance_previous`, with the baseline initialized from each episode's reset observation. It applies a time penalty of 0.1 reward units per simulation second and an additional 1.0 per second when speed rounds to zero after the five-second startup grace period. Both penalties use the actual elapsed simulation time. These rates are set by `time_penalty_rate` and `stopped_penalty_rate` in `BerninaEnv`. Collision and road-departure penalties require additional observations and are not included in this example.
+The reward uses `distance_now - distance_previous`, with the baseline initialized from each episode's reset observation. It applies a time penalty of 0.1 reward units per simulation second and an additional 1.0 per second when speed rounds to zero after the five-second startup grace period. Both penalties use the actual elapsed simulation time. These rates are set by `time_penalty_rate` and `stopped_penalty_rate` in `BerninaEnv`.
+
+An identified driving failure also subtracts a one-time terminal penalty, defaulting to 100 reward units for `vehicle_stopped`, `collision`, or `road_departure`. Configure per-reason nonnegative, finite amounts with `BerninaEnv(terminal_failure_penalties={"vehicle_stopped": 20.0, "collision": 100.0, "road_departure": 100.0})`; an empty mapping disables terminal penalties, and omitted reasons receive no penalty. These amounts are reward-shaping defaults and should be tuned for the scenario. Collision and road departure still require additional observations and an override of `scenario_failure(observation)` returning the corresponding reason; the bundled example detects only `vehicle_stopped`.
+
+The terminal adjustment is applied after `compute_reward()` and recorded in terminal `info["terminal_reward"]`. Normal completion, time limits, and a generic `simulation_failure` alone do not receive a driving penalty. A simulation error accompanied by an independently identified driving failure does receive its configured penalty. Unavailable final observations do not trigger terminal penalties based on stale observations. Infrastructure exceptions retain the existing recovery behavior.
 
 The trained policy is saved as:
 
