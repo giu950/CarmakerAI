@@ -31,6 +31,21 @@ class EnvironmentTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             CarMakerEnv()
 
+    def test_signed_simulator_observations_fit_space(self):
+        env = self.make_env(speed=-3.0)
+
+        async def read(*quantities):
+            values = {"Car.Road.sRoad": -25.0, "Time": env.maxTime + 0.01,
+                      "Car.v": -3.0}
+            return tuple(values[quantity] for quantity in quantities)
+
+        env.simcontrol.simio.dva_read_async = read
+        observation = self.loop.run_until_complete(env.get_observation())
+        np.testing.assert_allclose(observation, [-25.0, env.maxTime + 0.01, -3.0])
+        self.assertTrue(env.observation_space.contains(observation))
+        self.assertFalse(env.observation_space.contains(
+            np.array([-25.0, -0.01, -3.0], dtype=np.float32)))
+
     def test_custom_termination_time(self):
         env = BerninaEnv(termination_time=240)
         env.dt = 180.0

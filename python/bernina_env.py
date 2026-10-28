@@ -18,8 +18,11 @@ class BerninaEnv(CarMakerEnv):
         self.action_space = spaces.Box(
             low=0.02, high=1.0, shape=(1,), dtype=np.float32
         )
+        # Road position and velocity are signed, with no scenario-independent
+        # finite limits. Simulation time remains nonnegative and may overshoot
+        # the episode limit during an APO step.
         self.observation_space = spaces.Box(
-            low=np.zeros(3, dtype=np.float32),
+            low=np.array([-np.inf, 0.0, -np.inf], dtype=np.float32),
             high=np.full(3, np.inf, dtype=np.float32),
             dtype=np.float32,
         )
