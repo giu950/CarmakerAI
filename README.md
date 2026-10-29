@@ -49,6 +49,8 @@ The project targets the following configuration:
 - Conda (Miniconda or Anaconda)
 - Gym and Stable-Baselines3
 
+**Legacy dependency stack:** `requirements.txt` pins Gym 0.19.0, Stable-Baselines3 1.3.0, PyTorch 1.10.2, and NumPy 1.19.5 for the Python 3.6 setup targeting CarMaker 11.0 compatibility. Newer Python versions are not validated with this stack. Use the Python 3.6 environment described below when reproducing this setup.
+
 A working CarMaker installation and its Python API are required. The CarMaker API is provided with CarMaker and is not installed through `requirements.txt`.
 
 ### 1.2 Set up the Python environment
@@ -210,6 +212,10 @@ The example environment, `BerninaEnv`, is defined in `python/bernina_env.py`. It
 | Observations | Road distance, simulation time, and vehicle speed |
 | Reward | Incremental road progress minus `0.1 * elapsed_seconds`, with an additional stopping penalty |
 | Steering | Controlled by CarMaker's built-in driver |
+
+Actions must be real numeric arrays or lists with shape `(1,)` containing a finite throttle value within the declared action-space bounds (0.02 to 1.0, inclusive). Invalid actions raise `ValueError` before any throttle command is written; values are not clipped. When called through `step()`, an action error follows the base class's failure recovery behavior and requires a new `reset()`.
+
+Environment diagnostics use Python logging and are silent by default. To enable them, configure logging in your application with `logging.basicConfig(level=logging.DEBUG)` after importing `logging`.
 
 The reward uses `distance_now - distance_previous`, with the baseline initialized from each episode's reset observation. It applies a time penalty of 0.1 reward units per simulation second and an additional 1.0 per second when speed rounds to zero after the five-second startup grace period. Both penalties use the actual elapsed simulation time. These rates are set by `time_penalty_rate` and `stopped_penalty_rate` in `BerninaEnv`.
 

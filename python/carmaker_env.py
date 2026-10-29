@@ -42,7 +42,7 @@ class CarMakerEnv(gym.Env, ABC):
         self._simulation_error = None
         self._last_observation = None
         self.loop = asyncio.get_event_loop()  # Create an event loop
-        print("Init success")
+        logger.debug("Environment initialized")
 
     async def _bounded(self, operation):
         return await asyncio.wait_for(operation, timeout=self.sync_timeout)
@@ -258,14 +258,14 @@ class CarMakerEnv(gym.Env, ABC):
         self._last_observation = None
         self.loop.run_until_complete(self.start_simulation())  # Run the async function
         self.loop.run_until_complete(self.read_simulation_time())
-        print("Simulation started")
+        logger.debug("Simulation started")
 
         # Get the initial observation
         observation = self.loop.run_until_complete(self._bounded(self.get_observation()))  # Run the async function
         if self._episode_end:
             raise RuntimeError("TestRun ended during reset: " + self._episode_end)
         self._last_observation = observation.copy()
-        print("Observation: ", observation)
+        logger.debug("Initial observation: %s", observation)
         return observation
 
     def step(self, action):
@@ -292,8 +292,7 @@ class CarMakerEnv(gym.Env, ABC):
             observation = self._last_observation.copy()
             observation_valid = False
         self._last_observation = observation.copy()
-        if self.dt % 20 == 0:
-            print("Observation: ", observation)
+        logger.debug("Observation at simulation time %s: %s", self.dt, observation)
 
         # Compute reward
         reward = self.compute_reward(observation)
@@ -317,7 +316,7 @@ class CarMakerEnv(gym.Env, ABC):
 
         # Automatically stop the simulation if done
         if done:
-            print("Reward: ", reward)
+            logger.debug("Terminal reward: %s", reward)
             self.close()
 
         return observation, reward, done, info

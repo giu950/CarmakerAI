@@ -17,11 +17,13 @@ async def main():
     env = BerninaEnv(termination_time=args.termination_time)
     try:
         observation = env.reset()
+        episode_return = 0.0
         for _ in range(int(env.maxTime / env.time_step) + 1):
             action, _ = model.predict(observation, deterministic=True)
             observation, reward, done, _ = env.step(action)
+            episode_return += reward
             if done:
-                print("Episode finished. Final reward:", reward)
+                print("Episode finished. Total return:", episode_return)
                 break
     finally:
         env.close()

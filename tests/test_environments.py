@@ -31,6 +31,38 @@ class EnvironmentTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             CarMakerEnv()
 
+    def test_invalid_actions_are_rejected_before_simulator_write(self):
+        env = self.make_env()
+        invalid_actions = (
+            0.5, [], [0.5, 0.6], [[0.5]],
+            [float("nan")], [float("inf")], [float("-inf")],
+            [0.0], [0.019], [1.001], ["0.5"], [True], [0.5j],
+            [[0.5], []],
+        )
+        for action in invalid_actions:
+            with self.subTest(action=action):
+                with self.assertRaises(ValueError):
+                    self.loop.run_until_complete(env.set_action(action))
+                env.simcontrol.simio.dva_write_absolute_value.assert_not_called()
+
+    def test_valid_actions_include_bounds_and_numpy_arrays(self):
+        env = self.make_env()
+        for action in ([0.02], [1.0], np.array([0.5], dtype=np.float32),
+                       np.array([0.5], dtype=np.float64)):
+            with self.subTest(action=action):
+                self.loop.run_until_complete(env.set_action(action))
+                env.simcontrol.simio.dva_write_absolute_value.assert_called_with(
+                    "DM.Gas", float(action[0]), DVADuration.permanent)
+
+    def test_environment_diagnostics_do_not_print(self):
+        with patch("builtins.print") as output:
+            env = self.make_env()
+            env.reset()
+            env.dt = env.simulation_time = env.maxTime - env.time_step
+            env.step([0.5])
+            env.close()
+        output.assert_not_called()
+
     def test_signed_simulator_observations_fit_space(self):
         env = self.make_env(speed=-3.0)
 

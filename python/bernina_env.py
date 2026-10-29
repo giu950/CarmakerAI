@@ -42,8 +42,19 @@ class BerninaEnv(CarMakerEnv):
         )
 
     async def set_action(self, action):
+        """Apply one finite throttle value within the declared action bounds."""
+        try:
+            action = np.asarray(action)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("action must be a numeric array with shape (1,)") from exc
+        if action.shape != self.action_space.shape:
+            raise ValueError("action must have shape (1,)")
+        if action.dtype.kind not in "fiu" or not np.all(np.isfinite(action)):
+            raise ValueError("action must contain a finite real number")
+        if np.any(action < self.action_space.low) or np.any(action > self.action_space.high):
+            raise ValueError("action must be within the throttle bounds [0.02, 1.0]")
         self.simcontrol.simio.dva_write_absolute_value(
-            "DM.Gas", float(np.asarray(action).reshape(-1)[0]),
+            "DM.Gas", float(action[0]),
             DVADuration.permanent,
         )
 
