@@ -1,5 +1,7 @@
 # Reinforcement Learning for Autonomous Driving with CarMaker
 
+Licensed under the [MIT License](LICENSE).
+
 This repository provides a **minimal working setup for developing autonomous driving agents using Reinforcement Learning (RL) and IPG CarMaker**.
 
 The goal is to offer a starting point for building, training, and evaluating custom RL agents in a CarMaker simulation environment.
